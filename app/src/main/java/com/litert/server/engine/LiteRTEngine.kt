@@ -21,6 +21,10 @@ class LiteRTEngine(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: com.google.ai.edge.litertlm.Conversation? = null
     private var currentBackend: String = "GPU"
+    private var currentModelPath: String = ""
+    private var currentTemperature: Float = 0.7f
+    private var currentMaxTokens: Int = 1024
+    private var currentTopK: Int = 40
 
     var isReady = false
         private set
@@ -46,19 +50,12 @@ class LiteRTEngine(private val context: Context) {
                 val newEngine = Engine(config)
                 newEngine.initialize()
 
-                val conv = newEngine.createConversation(
-                    ConversationConfig(
-                        systemInstruction = Contents.of(
-                            Content.Text(
-                                "You are a helpful AI assistant running locally on an Android device " +
-                                "powered by Google's Gemma 4 multimodal LLM via LiteRT."
-                            )
-                        ),
-                        topK = topK,
-                        temperature = temperature,
-                        maxTokens = maxTokens
-                    )
-                )
+                currentModelPath = modelPath
+                currentTemperature = temperature
+                currentMaxTokens = maxTokens
+                currentTopK = topK
+
+                val conv = createNewConversation(newEngine, temperature, maxTokens, topK)
 
                 engine = newEngine
                 conversation = conv
@@ -79,6 +76,27 @@ class LiteRTEngine(private val context: Context) {
         }
     }
 
+    private fun createNewConversation(
+        eng: Engine,
+        temperature: Float,
+        maxTokens: Int,
+        topK: Int
+    ): com.google.ai.edge.litertlm.Conversation {
+        return eng.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(
+                    Content.Text(
+                        "You are a helpful AI assistant running locally on an Android device " +
+                        "powered by Google's Gemma 4 multimodal LLM via LiteRT."
+                    )
+                ),
+                topK = topK,
+                temperature = temperature,
+                maxTokens = maxTokens
+            )
+        )
+    }
+
     suspend fun generateText(prompt: String): Flow<String> {
         val conv = conversation ?: throw IllegalStateException("Engine not initialized")
         return conv.sendMessageAsync(
@@ -96,8 +114,12 @@ class LiteRTEngine(private val context: Context) {
         )
     }
 
+    // clearHistory: LiteRT has no clearHistory() API
+    // Correct approach is to create a fresh conversation on same engine
     fun clearHistory() {
-        conversation?.clearHistory()
+        val eng = engine ?: return
+        conversation = createNewConversation(eng, currentTemperature, currentMaxTokens, currentTopK)
+        Log.i(TAG, "Conversation history cleared (new conversation created)")
     }
 
     fun getBackend(): String = currentBackend
