@@ -23,7 +23,11 @@ class LiteRTEngine(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: com.google.ai.edge.litertlm.Conversation? = null
     private var currentBackend: String = "GPU"
-    private var currentSamplerConfig: SamplerConfig = SamplerConfig(topK = 40, temperature = 0.7f)
+    private var currentSamplerConfig: SamplerConfig = SamplerConfig(
+        topK = 40,
+        topP = 0.9,
+        temperature = 0.7
+    )
 
     var isReady = false
         private set
@@ -31,9 +35,10 @@ class LiteRTEngine(private val context: Context) {
     suspend fun initialize(
         modelPath: String,
         useGpu: Boolean = true,
-        temperature: Float = 0.7f,
+        temperature: Double = 0.7,
         maxTokens: Int = 1024,
-        topK: Int = 40
+        topK: Int = 40,
+        topP: Double = 0.9
     ): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -49,7 +54,7 @@ class LiteRTEngine(private val context: Context) {
                 val newEngine = Engine(config)
                 newEngine.initialize()
 
-                currentSamplerConfig = SamplerConfig(topK = topK, temperature = temperature)
+                currentSamplerConfig = SamplerConfig(topK = topK, topP = topP, temperature = temperature)
                 val conv = createNewConversation(newEngine, currentSamplerConfig)
 
                 engine = newEngine
@@ -62,7 +67,7 @@ class LiteRTEngine(private val context: Context) {
                 Log.e(TAG, "Failed to initialize with ${if (useGpu) "GPU" else "CPU"} backend", e)
                 if (useGpu) {
                     Log.w(TAG, "Falling back to CPU backend...")
-                    initialize(modelPath, useGpu = false, temperature, maxTokens, topK)
+                    initialize(modelPath, useGpu = false, temperature, maxTokens, topK, topP)
                 } else {
                     isReady = false
                     false
@@ -95,7 +100,6 @@ class LiteRTEngine(private val context: Context) {
 
     suspend fun analyzeImage(imagePath: String, prompt: String): Flow<String> {
         val conv = conversation ?: throw IllegalStateException("Engine not initialized")
-        // Send image path + prompt as combined text (LiteRT multimodal)
         return conv.sendMessageAsync("[Image: $imagePath] $prompt").map { it.toString() }
     }
 
