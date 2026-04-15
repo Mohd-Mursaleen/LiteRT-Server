@@ -20,32 +20,31 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Download gradle-wrapper.jar
         run: |
           mkdir -p gradle/wrapper
-          curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
-            "https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar"
+          curl -fsSL \
+            -o gradle/wrapper/gradle-wrapper.jar \
+            https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar
 
-      - name: Grant execute permission for gradlew
+      - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: List available tasks (debug)
-        run: ./gradlew tasks --all 2>&1 | head -60
-        continue-on-error: true
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
-
-      - name: Upload Debug APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: LiteRT-Server-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
-      - name: Upload Build Reports on Failure
+      - name: Upload build reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
