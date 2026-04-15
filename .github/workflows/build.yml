@@ -22,6 +22,12 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Download gradle-wrapper.jar
+        run: |
+          mkdir -p gradle/wrapper
+          curl -Lo gradle/wrapper/gradle-wrapper.jar \
+            https://github.com/gradle/gradle/raw/v8.9.0/gradle/wrapper/gradle-wrapper.jar
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -35,11 +41,9 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
-      - name: Upload Build Logs on Failure
+      - name: Upload Build Reports on Failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: |
-            app/build/reports/
-            app/build/outputs/logs/
+          name: build-reports
+          path: app/build/reports/
