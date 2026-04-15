@@ -24,19 +24,21 @@ data class DownloadProgress(
 class ModelDownloadManager(private val context: Context) {
 
     companion object {
+        // Correct filename: gemma-4-E2B-it.litertlm (not gemma-4-E2B-it-litert-lm.litertlm)
         private const val MODEL_URL =
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-litert-lm.litertlm"
-        private const val EXPECTED_SIZE_BYTES = 2_771_820_544L // ~2.58 GB
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+        private const val MODEL_FILENAME = "gemma-4-E2B-it.litertlm"
+        private const val EXPECTED_SIZE_BYTES = 2_771_820_544L
         private const val MIN_VALID_SIZE = 2_500_000_000L
     }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
     fun getModelPath(): String =
-        "${context.getExternalFilesDir(null)?.absolutePath}/gemma4.litertlm"
+        "${context.getExternalFilesDir(null)?.absolutePath}/$MODEL_FILENAME"
 
     fun isModelDownloaded(): Boolean {
         val file = File(getModelPath())
@@ -47,7 +49,9 @@ class ModelDownloadManager(private val context: Context) {
         val destFile = File(getModelPath())
         val existingBytes = if (destFile.exists()) destFile.length() else 0L
 
-        val requestBuilder = Request.Builder().url(MODEL_URL)
+        val requestBuilder = Request.Builder()
+            .url(MODEL_URL)
+            .header("User-Agent", "LiteRT-Server-Android/1.0")
         if (existingBytes > 0) {
             requestBuilder.header("Range", "bytes=$existingBytes-")
         }
@@ -56,7 +60,7 @@ class ModelDownloadManager(private val context: Context) {
             val response = client.newCall(requestBuilder.build()).execute()
 
             if (!response.isSuccessful && response.code != 206) {
-                throw Exception("Download failed: HTTP ${response.code}")
+                throw Exception("Download failed: HTTP ${response.code} — ${response.message}")
             }
 
             val totalBytes = when {
@@ -110,7 +114,7 @@ class ModelDownloadManager(private val context: Context) {
 
             if (destFile.length() < MIN_VALID_SIZE) {
                 destFile.delete()
-                throw Exception("Downloaded file is too small — may be corrupted. Please retry.")
+                throw Exception("Downloaded file too small — may be corrupted. Please retry.")
             }
 
             emit(
