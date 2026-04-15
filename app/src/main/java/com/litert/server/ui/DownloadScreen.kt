@@ -5,8 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,8 +27,61 @@ fun DownloadScreen(
     etaSeconds: Int,
     errorMessage: String?,
     onDownload: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onUseExistingModel: (String) -> Unit = {}
 ) {
+    var showPathDialog by remember { mutableStateOf(false) }
+    var customPath by remember { mutableStateOf("") }
+
+    if (showPathDialog) {
+        AlertDialog(
+            onDismissRequest = { showPathDialog = false },
+            containerColor = Color(0xFF1A1A1A),
+            title = {
+                Text("Enter model path", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text(
+                        "Paste the full path to your .litertlm file on device storage.",
+                        color = Color.Gray,
+                        fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = customPath,
+                        onValueChange = { customPath = it },
+                        placeholder = { Text("/sdcard/Download/gemma-4-E2B-it.litertlm", color = Color.DarkGray, fontSize = 12.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GreenPrimary,
+                            unfocusedBorderColor = Color(0xFF444444),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 3
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (customPath.isNotBlank()) {
+                        onUseExistingModel(customPath.trim())
+                        showPathDialog = false
+                    }
+                }) {
+                    Text("Use this file", color = GreenPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPathDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -74,6 +128,20 @@ fun DownloadScreen(
                     Icon(Icons.Default.Download, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Download Model", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { showPathDialog = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        // subtle border
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Use existing model file", fontSize = 14.sp)
                 }
             }
 
@@ -126,6 +194,17 @@ fun DownloadScreen(
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Retry Download", fontSize = 16.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { showPathDialog = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Use existing model file", fontSize = 14.sp)
                 }
             }
 
