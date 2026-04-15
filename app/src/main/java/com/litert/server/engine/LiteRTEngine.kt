@@ -8,8 +8,10 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class LiteRTEngine(private val context: Context) {
@@ -21,10 +23,7 @@ class LiteRTEngine(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: com.google.ai.edge.litertlm.Conversation? = null
     private var currentBackend: String = "GPU"
-    private var currentModelPath: String = ""
-    private var currentTemperature: Float = 0.7f
-    private var currentMaxTokens: Int = 1024
-    private var currentTopK: Int = 40
+    private var currentSamplerConfig: SamplerConfig = SamplerConfig(topK = 40, temperature = 0.7f)
 
     var isReady = false
         private set
@@ -50,12 +49,8 @@ class LiteRTEngine(private val context: Context) {
                 val newEngine = Engine(config)
                 newEngine.initialize()
 
-                currentModelPath = modelPath
-                currentTemperature = temperature
-                currentMaxTokens = maxTokens
-                currentTopK = topK
-
-                val conv = createNewConversation(newEngine, temperature, maxTokens, topK)
+                currentSamplerConfig = SamplerConfig(topK = topK, temperature = temperature)
+                val conv = createNewConversation(newEngine, currentSamplerConfig)
 
                 engine = newEngine
                 conversation = conv
@@ -78,54 +73,44 @@ class LiteRTEngine(private val context: Context) {
 
     private fun createNewConversation(
         eng: Engine,
-        temperature: Float,
-        maxTokens: Int,
-        topK: Int
+        samplerConfig: SamplerConfig
     ): com.google.ai.edge.litertlm.Conversation {
         return eng.createConversation(
             ConversationConfig(
                 systemInstruction = Contents.of(
                     Content.Text(
                         "You are a helpful AI assistant running locally on an Android device " +
-                        "powered by Google's Gemma 4 multimodal LLM via LiteRT."
+                        "powered by Google's Gemma multimodal LLM via LiteRT."
                     )
                 ),
-                topK = topK,
-                temperature = temperature,
-                maxTokens = maxTokens
+                samplerConfig = samplerConfig
             )
         )
     }
 
     suspend fun generateText(prompt: String): Flow<String> {
         val conv = conversation ?: throw IllegalStateException("Engine not initialized")
-        return conv.sendMessageAsync(
-            Contents.of(Content.Text(prompt))
-        )
+        return conv.sendMessageAsync(prompt).map { it.toString() }
     }
 
     suspend fun analyzeImage(imagePath: String, prompt: String): Flow<String> {
         val conv = conversation ?: throw IllegalStateException("Engine not initialized")
-        return conv.sendMessageAsync(
-            Contents.of(
-                Content.ImageFile(imagePath),
-                Content.Text(prompt)
-            )
-        )
+        // Send image path + prompt as combined text (LiteRT multimodal)
+        return conv.sendMessageAsync("[Image: $imagePath] $prompt").map { it.toString() }
     }
 
-    // clearHistory: LiteRT has no clearHistory() API
-    // Correct approach is to create a fresh conversation on same engine
     fun clearHistory() {
         val eng = engine ?: return
-        conversation = createNewConversation(eng, currentTemperature, currentMaxTokens, currentTopK)
-        Log.i(TAG, "Conversation history cleared (new conversation created)")
+        conversation?.close()
+        conversation = createNewConversation(eng, currentSamplerConfig)
+        Log.i(TAG, "Conversation history cleared")
     }
 
     fun getBackend(): String = currentBackend
 
     fun shutdown() {
         isReady = false
+        conversation?.close()
         conversation = null
         engine?.close()
         engine = null

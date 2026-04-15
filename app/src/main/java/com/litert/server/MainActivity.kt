@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.lifecycleScope
 import com.litert.server.data.*
@@ -84,10 +85,8 @@ class MainActivity : ComponentActivity() {
         }
         registerReceiver(engineReceiver, filter, RECEIVER_NOT_EXPORTED)
 
-        // Request POST_NOTIFICATIONS
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
-        // Request battery optimization exemption
         val pm = getSystemService(PowerManager::class.java)
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
             startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -125,7 +124,7 @@ class MainActivity : ComponentActivity() {
             }
             AppStatus.ERROR -> {
                 Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
-                    Column(modifier = Modifier.padding(all = androidx.compose.ui.unit.dp.times(24))) {
+                    Column(modifier = Modifier.padding(24.dp)) {
                         Text(
                             "Error: ${appState.errorMessage}",
                             color = Color(0xFFEF4444)
@@ -248,7 +247,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendMessage(text: String) {
-        // Delegate to LLMForegroundService via bound service or HTTP
         chatMessages.add(ChatMessage(role = MessageRole.USER, content = text))
         Toast.makeText(this, "Engine must be running to chat", Toast.LENGTH_SHORT).show()
     }
