@@ -29,6 +29,14 @@ class LLMForegroundService : Service() {
         const val EXTRA_ERROR_MESSAGE = "error_message"
         const val EXTRA_SERVER_PORT = "server_port"
         const val EXTRA_IS_GPU = "is_gpu"
+
+        /**
+         * Shared engine reference so MainActivity can call it directly for in-app chat/vision.
+         * Set when engine is ready, cleared on service destroy.
+         */
+        @Volatile
+        var engineInstance: LiteRTEngine? = null
+            private set
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -63,6 +71,9 @@ class LLMForegroundService : Service() {
                 }
                 val port = server.start()
                 apiServer = server
+
+                // Expose engine to MainActivity before broadcasting ready
+                engineInstance = engine
 
                 updateNotification("LiteRT Server Running — localhost:$port")
                 broadcastReady(port, engine.getBackend() == "GPU")
@@ -115,7 +126,6 @@ class LLMForegroundService : Service() {
         val intent = Intent(ACTION_ENGINE_READY).apply {
             putExtra(EXTRA_SERVER_PORT, port)
             putExtra(EXTRA_IS_GPU, isGpu)
-            // Explicit package ensures MainActivity receives it on Android 14+
             setPackage(packageName)
         }
         sendBroadcast(intent)
@@ -130,6 +140,7 @@ class LLMForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        engineInstance = null
         apiServer?.stop()
         llmEngine?.shutdown()
         scope.cancel()

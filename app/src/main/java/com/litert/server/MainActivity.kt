@@ -38,8 +38,10 @@ import com.litert.server.service.LLMForegroundService
 import com.litert.server.ui.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -52,6 +54,10 @@ class MainActivity : ComponentActivity() {
     private var selectedTab by mutableIntStateOf(0)
     private var selectedVariant by mutableStateOf(GemmaVariant.E2B)
 
+    // Holds reference to the engine once the service boots it.
+    // We bind to the service via a shared singleton so the UI can call it directly.
+    private var liteRTEngine: com.litert.server.engine.LiteRTEngine? = null
+
     // ── File picker ───────────────────────────────────────────────────────
     private val pickFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -60,19 +66,14 @@ class MainActivity : ComponentActivity() {
         appState = appState.copy(status = AppStatus.INITIALIZING)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Resolve real path from URI
                 val inputStream = contentResolver.openInputStream(uri)
                     ?: throw Exception("Cannot open file")
-                val dest = java.io.File(downloadManager.getModelPath())
+                val dest = File(downloadManager.getModelPath())
                 dest.parentFile?.mkdirs()
                 inputStream.use { ins ->
-                    dest.outputStream().use { out ->
-                        ins.copyTo(out)
-                    }
+                    dest.outputStream().use { out -> ins.copyTo(out) }
                 }
-                withContext(Dispatchers.Main) {
-                    startEngineService()
-                }
+                withContext(Dispatchers.Main) { startEngineService() }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     appState = appState.copy(
@@ -90,6 +91,8 @@ class MainActivity : ComponentActivity() {
                 LLMForegroundService.ACTION_ENGINE_READY -> {
                     val port = intent.getIntExtra(LLMForegroundService.EXTRA_SERVER_PORT, 8080)
                     val isGpu = intent.getBooleanExtra(LLMForegroundService.EXTRA_IS_GPU, true)
+                    // Grab the engine reference from the service singleton
+                    liteRTEngine = LLMForegroundService.engineInstance
                     appState = appState.copy(
                         status = AppStatus.READY,
                         isServerRunning = true,
@@ -159,25 +162,16 @@ class MainActivity : ComponentActivity() {
                     },
                     onDownload = ::startDownload,
                     onRetry = ::startDownload,
-                    onPickFile = {
-                        pickFileLauncher.launch(arrayOf("*/*"))
-                    }
+                    onPickFile = { pickFileLauncher.launch(arrayOf("*/*")) }
                 )
             }
-            AppStatus.READY -> {
-                MainTabLayout()
-            }
+            AppStatus.READY -> MainTabLayout()
             AppStatus.ERROR -> {
                 Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
                     Column(modifier = Modifier.padding(24.dp)) {
-                        Text(
-                            "Error: ${appState.errorMessage}",
-                            color = Color(0xFFEF4444)
-                        )
+                        Text("Error: ${appState.errorMessage}", color = Color(0xFFEF4444))
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = ::checkModelAndUpdateState) {
-                            Text("Retry")
-                        }
+                        Button(onClick = ::checkModelAndUpdateState) { Text("Retry") }
                     }
                 }
             }
@@ -193,7 +187,6 @@ class MainActivity : ComponentActivity() {
             Icons.Default.Api,
             Icons.Default.Settings
         )
-
         Scaffold(
             containerColor = DarkBackground,
             bottomBar = {
@@ -225,8 +218,12 @@ class MainActivity : ComponentActivity() {
                     1 -> VisionScreen(
                         isAnalyzing = isAnalyzing,
                         analysisResult = visionResult,
-                        onAnalyze = { _, _ -> },
-                        onShare = { Toast.makeText(this@MainActivity, "Copied!", Toast.LENGTH_SHORT).show() }
+                        onAnalyze = ::analyzeImage,
+                        onShare = {
+                            val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("result", it))
+                            Toast.makeText(this@MainActivity, "Copied!", Toast.LENGTH_SHORT).show()
+                        }
                     )
                     2 -> ServerScreen(
                         isRunning = appState.isServerRunning,
@@ -244,6 +241,92 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ── Chat ─────────────────────────────────────────────────────────────
+    private fun sendMessage(text: String) {
+        val engine = liteRTEngine
+        if (engine == null || !engine.isReady) {
+            Toast.makeText(this, "Engine not ready", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val userMsg = ChatMessage(role = MessageRole.USER, content = text)
+        chatMessages.add(userMsg)
+
+        // Placeholder assistant bubble that streams tokens in
+        val assistantMsg = ChatMessage(
+            role = MessageRole.ASSISTANT,
+            content = "",
+            isStreaming = true
+        )
+        chatMessages.add(assistantMsg)
+        val assistantIndex = chatMessages.lastIndex
+        isGenerating = true
+
+        lifecycleScope.launch {
+            try {
+                engine.generateText(text)
+                    .onCompletion { err ->
+                        isGenerating = false
+                        chatMessages[assistantIndex] =
+                            chatMessages[assistantIndex].copy(isStreaming = false)
+                        if (err != null) {
+                            chatMessages[assistantIndex] =
+                                chatMessages[assistantIndex].copy(content = "Error: ${err.message}")
+                        }
+                    }
+                    .collect { token ->
+                        chatMessages[assistantIndex] = chatMessages[assistantIndex].copy(
+                            content = chatMessages[assistantIndex].content + token
+                        )
+                    }
+            } catch (e: Exception) {
+                isGenerating = false
+                chatMessages[assistantIndex] =
+                    chatMessages[assistantIndex].copy(
+                        content = "Error: ${e.message}",
+                        isStreaming = false
+                    )
+            }
+        }
+    }
+
+    // ── Vision ───────────────────────────────────────────────────────────
+    private fun analyzeImage(uri: Uri, prompt: String) {
+        val engine = liteRTEngine
+        if (engine == null || !engine.isReady) {
+            Toast.makeText(this, "Engine not ready", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isAnalyzing = true
+        visionResult = ""
+
+        lifecycleScope.launch {
+            try {
+                // Copy URI to a temp file so LiteRT can read it as a file path
+                val tmpFile = File(cacheDir, "vision_input_${System.currentTimeMillis()}.jpg")
+                withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { ins ->
+                        tmpFile.outputStream().use { out -> ins.copyTo(out) }
+                    }
+                }
+
+                engine.analyzeImage(tmpFile.absolutePath, prompt)
+                    .onCompletion {
+                        isAnalyzing = false
+                        tmpFile.delete()
+                    }
+                    .collect { token ->
+                        visionResult += token
+                    }
+            } catch (e: Exception) {
+                isAnalyzing = false
+                visionResult = "Error: ${e.message}"
+            }
+        }
+    }
+
+    // ── Lifecycle helpers ───────────────────────────────────────────────
     private fun checkModelAndUpdateState() {
         if (downloadManager.isModelDownloaded()) {
             startEngineService()
@@ -270,9 +353,7 @@ class MainActivity : ComponentActivity() {
                         downloadSpeedMbps = progress.speedMbps,
                         etaSeconds = progress.etaSeconds
                     )
-                    if (progress.isDone) {
-                        startEngineService()
-                    }
+                    if (progress.isDone) startEngineService()
                 }
         }
     }
@@ -289,15 +370,11 @@ class MainActivity : ComponentActivity() {
     private fun toggleServer() {
         if (appState.isServerRunning) {
             stopService(Intent(this, LLMForegroundService::class.java))
+            liteRTEngine = null
             appState = appState.copy(isServerRunning = false, engineReady = false)
         } else {
             startEngineService()
         }
-    }
-
-    private fun sendMessage(text: String) {
-        chatMessages.add(ChatMessage(role = MessageRole.USER, content = text))
-        Toast.makeText(this, "Engine must be running to chat", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {

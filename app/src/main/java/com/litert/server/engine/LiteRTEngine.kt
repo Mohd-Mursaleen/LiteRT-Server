@@ -98,9 +98,17 @@ class LiteRTEngine(private val context: Context) {
         return conv.sendMessageAsync(prompt).map { it.toString() }
     }
 
+    /**
+     * Passes the image file + prompt as proper multimodal content.
+     * imagePath must be an absolute file path readable by the engine.
+     */
     suspend fun analyzeImage(imagePath: String, prompt: String): Flow<String> {
         val conv = conversation ?: throw IllegalStateException("Engine not initialized")
-        return conv.sendMessageAsync("[Image: $imagePath] $prompt").map { it.toString() }
+        val contents = Contents.of(
+            Content.ImageFile(imagePath),
+            Content.Text(prompt)
+        )
+        return conv.sendMessageAsync(contents).map { it.toString() }
     }
 
     fun clearHistory() {
