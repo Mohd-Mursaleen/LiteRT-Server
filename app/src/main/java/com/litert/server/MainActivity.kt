@@ -129,6 +129,10 @@ class MainActivity : ComponentActivity() {
                             "Error: ${appState.errorMessage}",
                             color = Color(0xFFEF4444)
                         )
+                        Spacer(modifier = Modifier.padding(8.dp))
+                        Button(onClick = ::checkModelAndUpdateState) {
+                            Text("Retry")
+                        }
                     }
                 }
             }
@@ -196,10 +200,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkModelAndUpdateState() {
-        appState = if (downloadManager.isModelDownloaded()) {
-            appState.copy(status = AppStatus.INITIALIZING)
+        if (downloadManager.isModelDownloaded()) {
+            // Model exists — boot the engine immediately
+            startEngineService()
         } else {
-            appState.copy(status = AppStatus.MODEL_NOT_FOUND)
+            appState = appState.copy(status = AppStatus.MODEL_NOT_FOUND)
         }
     }
 

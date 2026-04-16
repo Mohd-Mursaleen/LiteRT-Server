@@ -4,9 +4,19 @@ import com.litert.server.data.ChatRequest
 import com.litert.server.data.ChatResponse
 import com.litert.server.data.ErrorResponse
 import com.litert.server.data.HealthResponse
+import com.litert.server.data.OaiChatRequest
+import com.litert.server.data.OaiChatResponse
+import com.litert.server.data.OaiChoice
+import com.litert.server.data.OaiDelta
+import com.litert.server.data.OaiMessage
+import com.litert.server.data.OaiModelEntry
+import com.litert.server.data.OaiModelsResponse
+import com.litert.server.data.OaiStreamChunk
+import com.litert.server.data.OaiStreamChoice
 import com.litert.server.data.RequestLogEntry
 import com.litert.server.data.VisionRequest
 import com.litert.server.engine.LiteRTEngine
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.call
@@ -19,10 +29,13 @@ import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.flow.toList
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class HttpApiServer(
@@ -33,12 +46,14 @@ class HttpApiServer(
     var port: Int = 8080
         private set
 
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
     fun start(): Int {
         for (tryPort in 8080..8082) {
             try {
                 server = embeddedServer(CIO, port = tryPort) {
                     install(ContentNegotiation) {
-                        json(Json { ignoreUnknownKeys = true })
+                        json(json)
                     }
                     install(CORS) {
                         anyHost()
@@ -53,6 +68,8 @@ class HttpApiServer(
                     }
 
                     routing {
+
+                        // ── health ──────────────────────────────────────────
                         get("/health") {
                             call.respond(
                                 HealthResponse(
@@ -64,6 +81,113 @@ class HttpApiServer(
                             )
                         }
 
+                        // ── OpenAI-compatible v1 routes ──────────────────────
+                        route("/v1") {
+
+                            get("/models") {
+                                call.respond(
+                                    OaiModelsResponse(
+                                        data = listOf(
+                                            OaiModelEntry(id = "gemma-4-e2b")
+                                        )
+                                    )
+                                )
+                            }
+
+                            post("/chat/completions") {
+                                if (!engine.isReady) {
+                                    call.respond(
+                                        HttpStatusCode.ServiceUnavailable,
+                                        ErrorResponse("Engine not ready", 503)
+                                    )
+                                    return@post
+                                }
+
+                                val req = call.receive<OaiChatRequest>()
+                                val start = System.currentTimeMillis()
+
+                                // Build prompt from message history
+                                val prompt = req.messages.joinToString("\n") {
+                                    "${it.role}: ${it.content}"
+                                } + "\nassistant:"
+
+                                if (req.stream) {
+                                    val reqId = "chatcmpl-${System.currentTimeMillis()}"
+                                    call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                                        // First chunk carries the role
+                                        val firstChunk = OaiStreamChunk(
+                                            id = reqId,
+                                            created = System.currentTimeMillis() / 1000,
+                                            model = "gemma-4-e2b",
+                                            choices = listOf(
+                                                OaiStreamChoice(
+                                                    index = 0,
+                                                    delta = OaiDelta(role = "assistant", content = "")
+                                                )
+                                            )
+                                        )
+                                        write("data: ${json.encodeToString(firstChunk)}\n\n")
+                                        flush()
+
+                                        engine.generateText(prompt).collect { token ->
+                                            val chunk = OaiStreamChunk(
+                                                id = reqId,
+                                                created = System.currentTimeMillis() / 1000,
+                                                model = "gemma-4-e2b",
+                                                choices = listOf(
+                                                    OaiStreamChoice(
+                                                        index = 0,
+                                                        delta = OaiDelta(content = token)
+                                                    )
+                                                )
+                                            )
+                                            write("data: ${json.encodeToString(chunk)}\n\n")
+                                            flush()
+                                        }
+
+                                        // Final stop chunk
+                                        val stopChunk = OaiStreamChunk(
+                                            id = reqId,
+                                            created = System.currentTimeMillis() / 1000,
+                                            model = "gemma-4-e2b",
+                                            choices = listOf(
+                                                OaiStreamChoice(
+                                                    index = 0,
+                                                    delta = OaiDelta(),
+                                                    finishReason = "stop"
+                                                )
+                                            )
+                                        )
+                                        write("data: ${json.encodeToString(stopChunk)}\n\n")
+                                        write("data: [DONE]\n\n")
+                                        flush()
+                                    }
+                                    val ms = System.currentTimeMillis() - start
+                                    onRequest(RequestLogEntry(endpoint = "/v1/chat/completions", responseTimeMs = ms, statusCode = 200))
+                                } else {
+                                    val tokens = engine.generateText(prompt).toList()
+                                    val content = tokens.joinToString("")
+                                    val ms = System.currentTimeMillis() - start
+                                    onRequest(RequestLogEntry(endpoint = "/v1/chat/completions", responseTimeMs = ms, statusCode = 200))
+                                    call.respond(
+                                        OaiChatResponse(
+                                            id = "chatcmpl-${System.currentTimeMillis()}",
+                                            created = System.currentTimeMillis() / 1000,
+                                            model = "gemma-4-e2b",
+                                            choices = listOf(
+                                                OaiChoice(
+                                                    index = 0,
+                                                    message = OaiMessage(role = "assistant", content = content),
+                                                    finishReason = "stop"
+                                                )
+                                            )
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        // ── Legacy routes (kept for backward compat) ─────────
                         post("/chat") {
                             val start = System.currentTimeMillis()
                             val req = call.receive<ChatRequest>()
