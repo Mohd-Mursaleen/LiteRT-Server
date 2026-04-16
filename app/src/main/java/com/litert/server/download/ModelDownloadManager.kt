@@ -21,37 +21,67 @@ data class DownloadProgress(
     val error: String? = null
 )
 
-class ModelDownloadManager(private val context: Context) {
+/**
+ * All Gemma 4 variants available as .litertlm from litert-community on HuggingFace.
+ */
+enum class GemmaVariant(
+    val displayName: String,
+    val description: String,
+    val sizeGb: Float,
+    val filename: String,
+    val url: String,
+    val minValidBytes: Long
+) {
+    E2B(
+        displayName = "Gemma 4 E2B",
+        description = "2B MoE · multimodal (text, image, audio) · 128K ctx",
+        sizeGb = 2.58f,
+        filename = "gemma-4-E2B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+        minValidBytes = 2_400_000_000L
+    ),
+    E4B(
+        displayName = "Gemma 4 E4B",
+        description = "4B MoE · multimodal (text, image, audio) · 128K ctx",
+        sizeGb = 3.65f,
+        filename = "gemma-4-E4B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm",
+        minValidBytes = 3_500_000_000L
+    )
+    // 26B A4B and 31B are not available as .litertlm for mobile yet
+}
 
-    companion object {
-        private const val MODEL_URL =
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
-        private const val MODEL_FILENAME = "gemma-4-E2B-it.litertlm"
-        private const val EXPECTED_SIZE_BYTES = 2_771_820_544L
-        private const val MIN_VALID_SIZE = 2_500_000_000L
-    }
+class ModelDownloadManager(private val context: Context) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    private var activeVariant: GemmaVariant = GemmaVariant.E2B
+
+    fun setVariant(variant: GemmaVariant) {
+        activeVariant = variant
+    }
+
+    fun getActiveVariant(): GemmaVariant = activeVariant
+
     fun getModelPath(): String =
-        "${context.getExternalFilesDir(null)?.absolutePath}/$MODEL_FILENAME"
+        "${context.getExternalFilesDir(null)?.absolutePath}/${activeVariant.filename}"
 
     fun isModelDownloaded(): Boolean {
         val file = File(getModelPath())
-        return file.exists() && file.length() >= MIN_VALID_SIZE
+        return file.exists() && file.length() >= activeVariant.minValidBytes
     }
 
     /**
-     * Lets user point to an existing .litertlm file elsewhere on storage.
-     * Copies it to the expected model path.
+     * Called after user picks a file via the system file picker.
+     * Copies (or symlinks via path) the file to our expected model location.
      */
     fun useExistingModel(sourcePath: String): Boolean {
         return try {
             val src = File(sourcePath)
-            if (!src.exists() || src.length() < MIN_VALID_SIZE) return false
+            if (!src.exists() || src.length() < 100_000_000L) return false
             val dest = File(getModelPath())
             src.copyTo(dest, overwrite = true)
             true
@@ -61,11 +91,12 @@ class ModelDownloadManager(private val context: Context) {
     }
 
     fun downloadModel(): Flow<DownloadProgress> = flow {
+        val variant = activeVariant
         val destFile = File(getModelPath())
         val existingBytes = if (destFile.exists()) destFile.length() else 0L
 
         val requestBuilder = Request.Builder()
-            .url(MODEL_URL)
+            .url(variant.url)
             .header("User-Agent", "LiteRT-Server-Android/1.0")
         if (existingBytes > 0) {
             requestBuilder.header("Range", "bytes=$existingBytes-")
@@ -80,9 +111,11 @@ class ModelDownloadManager(private val context: Context) {
         val totalBytes = when {
             response.code == 206 -> {
                 val contentRange = response.header("Content-Range") ?: ""
-                contentRange.substringAfterLast('/').toLongOrNull() ?: EXPECTED_SIZE_BYTES
+                contentRange.substringAfterLast('/').toLongOrNull()
+                    ?: (variant.sizeGb * 1024 * 1024 * 1024).toLong()
             }
-            else -> response.body?.contentLength()?.takeIf { it > 0 } ?: EXPECTED_SIZE_BYTES
+            else -> response.body?.contentLength()?.takeIf { it > 0 }
+                ?: (variant.sizeGb * 1024 * 1024 * 1024).toLong()
         }
 
         val body = response.body ?: throw Exception("Empty response body")
@@ -108,7 +141,6 @@ class ModelDownloadManager(private val context: Context) {
                         val speedMbps = (bytesSinceLastCheck / 1024f / 1024f) / (elapsed / 1000f)
                         val remaining = totalBytes - downloadedBytes
                         val etaSec = if (speedMbps > 0) (remaining / 1024 / 1024 / speedMbps).toInt() else 0
-
                         emit(
                             DownloadProgress(
                                 progressPercent = downloadedBytes.toFloat() / totalBytes,
@@ -125,7 +157,7 @@ class ModelDownloadManager(private val context: Context) {
             }
         }
 
-        if (destFile.length() < MIN_VALID_SIZE) {
+        if (destFile.length() < variant.minValidBytes) {
             destFile.delete()
             throw Exception("Downloaded file too small — may be corrupted. Please retry.")
         }
@@ -140,7 +172,7 @@ class ModelDownloadManager(private val context: Context) {
                 isDone = true
             )
         )
-    }.flowOn(Dispatchers.IO) // correct way — no withContext inside flow
+    }.flowOn(Dispatchers.IO)
 
     fun deleteModel() {
         File(getModelPath()).delete()

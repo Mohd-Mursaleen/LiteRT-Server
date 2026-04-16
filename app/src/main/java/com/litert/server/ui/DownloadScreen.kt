@@ -1,9 +1,12 @@
 package com.litert.server.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
@@ -16,6 +19,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.litert.server.data.AppStatus
+import com.litert.server.download.GemmaVariant
 
 @Composable
 fun DownloadScreen(
@@ -26,67 +30,18 @@ fun DownloadScreen(
     speedMbps: Float,
     etaSeconds: Int,
     errorMessage: String?,
+    selectedVariant: GemmaVariant,
+    onVariantSelected: (GemmaVariant) -> Unit,
     onDownload: () -> Unit,
     onRetry: () -> Unit,
+    onPickFile: () -> Unit,
     onUseExistingModel: (String) -> Unit = {}
 ) {
-    var showPathDialog by remember { mutableStateOf(false) }
-    var customPath by remember { mutableStateOf("") }
-
-    if (showPathDialog) {
-        AlertDialog(
-            onDismissRequest = { showPathDialog = false },
-            containerColor = Color(0xFF1A1A1A),
-            title = {
-                Text("Enter model path", color = Color.White, fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column {
-                    Text(
-                        "Paste the full path to your .litertlm file on device storage.",
-                        color = Color.Gray,
-                        fontSize = 13.sp
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = customPath,
-                        onValueChange = { customPath = it },
-                        placeholder = { Text("/sdcard/Download/gemma-4-E2B-it.litertlm", color = Color.DarkGray, fontSize = 12.sp) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = GreenPrimary,
-                            unfocusedBorderColor = Color(0xFF444444),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = false,
-                        maxLines = 3
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (customPath.isNotBlank()) {
-                        onUseExistingModel(customPath.trim())
-                        showPathDialog = false
-                    }
-                }) {
-                    Text("Use this file", color = GreenPrimary)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPathDialog = false }) {
-                    Text("Cancel", color = Color.Gray)
-                }
-            }
-        )
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBackground)
-            .padding(32.dp),
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -94,54 +49,115 @@ fun DownloadScreen(
             Icons.Default.Download,
             contentDescription = null,
             tint = GreenPrimary,
-            modifier = Modifier.size(72.dp)
+            modifier = Modifier.size(64.dp)
         )
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
-            "Gemma 4 E2B",
+            "LiteRT Server",
             color = Color.White,
-            fontSize = 28.sp,
+            fontSize = 26.sp,
             fontWeight = FontWeight.Bold
         )
         Text(
-            "On-device multimodal LLM",
+            "On-device LLM via Google LiteRT-LM",
             color = Color.Gray,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "~2.58 GB · One-time download",
-            color = Color.Gray,
-            fontSize = 12.sp
-        )
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(32.dp))
 
+        // ── Model selector ────────────────────────────────────────────────
+        if (status == AppStatus.MODEL_NOT_FOUND || status == AppStatus.DOWNLOAD_ERROR) {
+            Text(
+                "Select model",
+                color = Color.Gray,
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            GemmaVariant.entries.forEach { variant ->
+                val selected = variant == selectedVariant
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .border(
+                            width = if (selected) 1.5.dp else 1.dp,
+                            color = if (selected) GreenPrimary else Color(0xFF333333),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .background(
+                            color = if (selected) Color(0xFF0D2D0D) else Color(0xFF111111),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { onVariantSelected(variant) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            variant.displayName,
+                            color = if (selected) GreenPrimary else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            variant.description,
+                            color = Color.Gray,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text(
+                        "${variant.sizeGb} GB",
+                        color = if (selected) GreenPrimary else Color.Gray,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (selected) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = GreenPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        // ── Status-based content ──────────────────────────────────────────
         when (status) {
             AppStatus.MODEL_NOT_FOUND -> {
                 Button(
                     onClick = onDownload,
                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Download Model", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Download ${selectedVariant.displayName}",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(
-                    onClick = { showPathDialog = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        // subtle border
-                    ),
+                    onClick = onPickFile,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.Default.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Use existing model file", fontSize = 14.sp)
+                    Text("Browse for .litertlm file", fontSize = 14.sp)
                 }
             }
 
@@ -159,7 +175,7 @@ fun DownloadScreen(
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     "${"%.1f".format(downloadedMb)} MB / ${"%.0f".format(totalMb)} MB",
                     color = Color.White,
@@ -184,32 +200,44 @@ fun DownloadScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 errorMessage?.let {
-                    Text(it, color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
+                    Text(
+                        it,
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 Button(
                     onClick = onRetry,
                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Retry Download", fontSize = 16.sp)
+                    Text("Retry Download", fontSize = 15.sp)
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(
-                    onClick = { showPathDialog = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray),
+                    onClick = onPickFile,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.Default.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Use existing model file", fontSize = 14.sp)
+                    Text("Browse for .litertlm file", fontSize = 14.sp)
                 }
             }
 
             AppStatus.INITIALIZING -> {
-                CircularProgressIndicator(color = GreenPrimary, modifier = Modifier.size(48.dp))
+                CircularProgressIndicator(
+                    color = GreenPrimary,
+                    modifier = Modifier.size(48.dp)
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "Loading model into GPU memory...",
@@ -218,7 +246,7 @@ fun DownloadScreen(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    "This may take 10–30 seconds on first launch",
+                    "This may take 10–60 seconds on first launch",
                     color = Color.Gray,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center

@@ -32,12 +32,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.litert.server.data.*
+import com.litert.server.download.GemmaVariant
 import com.litert.server.download.ModelDownloadManager
 import com.litert.server.service.LLMForegroundService
 import com.litert.server.ui.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +50,39 @@ class MainActivity : ComponentActivity() {
     private var visionResult by mutableStateOf("")
     private var isAnalyzing by mutableStateOf(false)
     private var selectedTab by mutableIntStateOf(0)
+    private var selectedVariant by mutableStateOf(GemmaVariant.E2B)
+
+    // ── File picker ───────────────────────────────────────────────────────
+    private val pickFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        appState = appState.copy(status = AppStatus.INITIALIZING)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Resolve real path from URI
+                val inputStream = contentResolver.openInputStream(uri)
+                    ?: throw Exception("Cannot open file")
+                val dest = java.io.File(downloadManager.getModelPath())
+                dest.parentFile?.mkdirs()
+                inputStream.use { ins ->
+                    dest.outputStream().use { out ->
+                        ins.copyTo(out)
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    startEngineService()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    appState = appState.copy(
+                        status = AppStatus.DOWNLOAD_ERROR,
+                        errorMessage = "Failed to copy file: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
 
     private val engineReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -116,8 +151,17 @@ class MainActivity : ComponentActivity() {
                     speedMbps = appState.downloadSpeedMbps,
                     etaSeconds = appState.etaSeconds,
                     errorMessage = appState.errorMessage,
+                    selectedVariant = selectedVariant,
+                    onVariantSelected = { variant ->
+                        selectedVariant = variant
+                        downloadManager.setVariant(variant)
+                        checkModelAndUpdateState()
+                    },
                     onDownload = ::startDownload,
-                    onRetry = ::startDownload
+                    onRetry = ::startDownload,
+                    onPickFile = {
+                        pickFileLauncher.launch(arrayOf("*/*"))
+                    }
                 )
             }
             AppStatus.READY -> {

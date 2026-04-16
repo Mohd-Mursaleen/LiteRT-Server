@@ -115,6 +115,8 @@ class LLMForegroundService : Service() {
         val intent = Intent(ACTION_ENGINE_READY).apply {
             putExtra(EXTRA_SERVER_PORT, port)
             putExtra(EXTRA_IS_GPU, isGpu)
+            // Explicit package ensures MainActivity receives it on Android 14+
+            setPackage(packageName)
         }
         sendBroadcast(intent)
     }
@@ -122,6 +124,7 @@ class LLMForegroundService : Service() {
     private fun broadcastError(message: String) {
         val intent = Intent(ACTION_ENGINE_ERROR).apply {
             putExtra(EXTRA_ERROR_MESSAGE, message)
+            setPackage(packageName)
         }
         sendBroadcast(intent)
     }
