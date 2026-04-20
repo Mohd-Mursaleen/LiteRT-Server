@@ -78,3 +78,7 @@ If GPU init fails, the engine automatically falls back to CPU.
 - `POST_NOTIFICATIONS` requested at runtime
 - Battery optimization exemption requested on first launch
 - `ServiceCompat.startForeground()` used with correct type flags
+
+## APK Link
+
+https://drive.google.com/file/d/147EVwUyKYFmUYRys2-xXf1qiRUDXqL50/view?usp=sharing
